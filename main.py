@@ -1,4 +1,3 @@
-# main.py
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -10,13 +9,12 @@ from model import UNet
 
 # --- 1. 配置参数 (这是你的“控制面板”) ---
 DATA_DIR = "/data1/zhoushengyao/projects/media/nas/01_Datasets/CT/LITS/Training_Batch2" # <--- 必须修改成你的数据路径!
-BATCH_SIZE = 8      # 根据你的GPU显存调整，先设小一点
+BATCH_SIZE = 8     
 LEARNING_RATE = 1e-4
-EPOCHS = 20         # 先训练少量轮次看看效果
+EPOCHS = 20       
 
 def main():
-    # --- 2. 设备选择 ---
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda:5' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
 
     # --- 3. 准备数据 ---

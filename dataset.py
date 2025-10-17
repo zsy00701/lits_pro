@@ -1,4 +1,3 @@
-# dataset.py
 import os
 import torch
 from torch.utils.data import Dataset
@@ -12,21 +11,40 @@ class LiTSDataset(Dataset):
         self.mask_files = sorted([f for f in os.listdir(data_dir) if f.startswith('segmentation')])
         
         self.slices = []
+        # dataset.py __init__ 函数
+
+        # ... (循环前的代码保持不变) ...
+        
+        # --- 这是我们升级后的、带详细监控的循环 ---
         for i in range(len(self.image_files)):
-            # 读取一个病人的完整3D影像
-            img_path = os.path.join(self.data_dir, self.image_files[i])
-            img_itk = sitk.ReadImage(img_path)
-            
-            # 获取切片数量，为每个切片创建一个索引
-            num_slices = img_itk.GetDepth()
-            for s in range(num_slices):
-                # 我们只训练包含肝脏的切片，以节省时间 (标签>0)
+            try:
+                # 打印将要处理的文件，这是我们的“心跳”
+                print(f"--> [Patient {i+1}/{len(self.image_files)}] Reading mask file: {self.mask_files[i]}")
+                
                 mask_path = os.path.join(self.data_dir, self.mask_files[i])
                 mask_itk = sitk.ReadImage(mask_path)
-                mask_slice = sitk.GetArrayViewFromImage(mask_itk)[s, :, :]
-                if np.sum(mask_slice) > 0: # 如果这个切片里有肝脏
-                    self.slices.append((i, s)) # (病人索引, 切片索引)
+                mask_array = sitk.GetArrayViewFromImage(mask_itk)
+                
+                num_slices = mask_itk.GetDepth()
+                
+                # 打印找到了多少切片
+                print(f"    - Found {num_slices} total slices. Now checking for valid ones...")
 
+                processed_slices_for_this_patient = 0
+                for s in range(num_slices):
+                    if np.sum(mask_array[s, :, :]) > 0:
+                        self.slices.append((i, s))
+                        processed_slices_for_this_patient += 1
+                
+                print(f"    - Done. Found {processed_slices_for_this_patient} valid slices for this patient.")
+
+            except Exception as e:
+                print(f"!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+                print(f"!!!!!! ERROR processing patient {i} ({self.image_files[i]}) !!!!!!")
+                print(f"!!!!!! Error message: {e}")
+                print(f"!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+                # 即使一个病人出错，我们也继续处理下一个
+                continue
     def __len__(self):
         return len(self.slices)
 
