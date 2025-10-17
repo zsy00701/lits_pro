@@ -17,14 +17,14 @@ def main():
     device = torch.device('cuda:5' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
 
-    # --- 3. 准备数据 ---
+    # 加载数据
     print("Loading data...")
     dataset = LiTSDataset(data_dir=DATA_DIR)
-    # DataLoader负责把数据分批 (batch)
-    dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4)
+    #DataLoader
+    dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
     print("Data loaded!")
 
-    # --- 4. 初始化模型、损失函数、优化器 ---
+    
     # U-Net的输入是1个通道(灰度图)，输出是1个通道(二分类的mask)
     model = UNet(n_channels=1, n_classes=1).to(device)
     
@@ -34,10 +34,10 @@ def main():
     # 优化器：Adam是常用的选择
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
-    # --- 5. 训练循环 ---
+    # 训练
     print("Starting training...")
     for epoch in range(EPOCHS):
-        model.train() # 设置为训练模式
+        model.train() 
         epoch_loss = 0.0
         
         # 使用tqdm来显示进度条
@@ -66,7 +66,7 @@ def main():
             
         print(f"Epoch {epoch+1}/{EPOCHS}, Average Loss: {epoch_loss / len(dataloader)}")
 
-    # --- 6. 保存模型 ---
+    #  保存模型 
     torch.save(model.state_dict(), 'unet_lits.pth')
     print("Training finished. Model saved to unet_lits.pth")
 
