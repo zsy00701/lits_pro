@@ -1,88 +1,68 @@
-import os
+# scripts/custom_dataset.py
+
 import torch
 from torch.utils.data import Dataset
-import SimpleITK as sitk
+import glob
+import os
 import numpy as np
+from tqdm import tqdm
+
+# 从我们刚写的文件中导入函数
+from custom_data_utils import preprocess, get_random_patches
 
 class LiTSDataset(Dataset):
-    def __init__(self, data_dir):
-        self.data_dir = data_dir
-        self.image_files = sorted([f for f in os.listdir(data_dir) if f.startswith('volume')])
-        self.mask_files = sorted([f for f in os.listdir(data_dir) if f.startswith('segmentation')])
+    def __init__(self, data_dir, patch_size=(96, 96, 96), num_samples_per_image=4):
+        self.patch_size = patch_size
+        self.num_samples = num_samples_per_image
+
+        # 1. 获取所有图像和标签的路径
+        image_paths = sorted(glob.glob(os.path.join(data_dir, "volume-*.nii.gz")))
+        label_paths = sorted(glob.glob(os.path.join(data_dir, "segmentation-*.nii.gz")))
+        self.file_pairs = list(zip(image_paths, label_paths))
         
-        self.slices = []
-        # dataset.py __init__ 函数
+        # --- 关键策略：预处理并缓存所有 patch ---
+        # 这种策略会占用大量内存（RAM），但会使训练时的 I/O 速度飞快
+        # 因为我们是在 __init__ 中一次性加载所有数据
+        self.all_patches = self._generate_all_patches()
 
-        # ... (循环前的代码保持不变) ...
+    def _generate_all_patches(self):
+        print("开始预处理和生成所有训练 patches...")
+        all_patches = []
         
-        # --- 这是我们升级后的、带详细监控的循环 ---
-        for i in range(len(self.image_files)):
-            try:
-                # 打印将要处理的文件，这是我们的“心跳”
-                print(f"--> [Patient {i+1}/{len(self.image_files)}] Reading mask file: {self.mask_files[i]}")
-                
-                mask_path = os.path.join(self.data_dir, self.mask_files[i])
-                mask_itk = sitk.ReadImage(mask_path)
-                mask_array = sitk.GetArrayViewFromImage(mask_itk)
-                
-                num_slices = mask_itk.GetDepth()
-                
-                # 打印找到了多少切片
-                print(f"    - Found {num_slices} total slices. Now checking for valid ones...")
+        # 遍历所有 131 个（或更少）训练图像
+        for img_path, lbl_path in tqdm(self.file_pairs):
+            # 2. 对每个图像执行完整的预处理
+            image, label = preprocess(img_path, lbl_path)
+            
+            # 3. 从中采样 N 个 patches
+            patches = get_random_patches(image, label, self.patch_size, self.num_samples)
+            
+            all_patches.extend(patches)
+            
+        print(f"总共生成了 {len(all_patches)} 个 patches.")
+        return all_patches
 
-                processed_slices_for_this_patient = 0
-                for s in range(num_slices):
-                    if np.sum(mask_array[s, :, :]) > 0:
-                        self.slices.append((i, s))
-                        processed_slices_for_this_patient += 1
-                
-                print(f"    - Done. Found {processed_slices_for_this_patient} valid slices for this patient.")
-
-            except Exception as e:
-                print(f"!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-                print(f"!!!!!! ERROR processing patient {i} ({self.image_files[i]}) !!!!!!")
-                print(f"!!!!!! Error message: {e}")
-                print(f"!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-                # 即使一个病人出错，我们也继续处理下一个
-                continue
     def __len__(self):
-        return len(self.slices)
+        # 数据集的总长度就是 patch 的总数
+        return len(self.all_patches)
 
     def __getitem__(self, idx):
-        patient_idx, slice_idx = self.slices[idx]
+        # 从缓存中取出一个 patch
+        image_patch, label_patch = self.all_patches[idx]
         
-        # --- 读取和处理图像 ---
-        img_path = os.path.join(self.data_dir, self.image_files[patient_idx])
-        img_itk = sitk.ReadImage(img_path)
-        img_array = sitk.GetArrayFromImage(img_itk) # (D, H, W)
-        
-        # 提取单个2D切片
-        img_slice = img_array[slice_idx, :, :].astype(np.float32)
-        
-        # --- 窗位窗宽调整 (非常重要的医学图像预处理步骤) ---
-        # 腹部CT的典型窗位窗宽
-        window_center = 40
-        window_width = 400
-        min_val = window_center - window_width / 2
-        max_val = window_center + window_width / 2
-        img_slice = np.clip(img_slice, min_val, max_val)
-        
-        # --- 归一化到 0-1 ---
-        img_slice = (img_slice - min_val) / window_width
-        
-        # --- 读取和处理标签 ---
-        mask_path = os.path.join(self.data_dir, self.mask_files[patient_idx])
-        mask_itk = sitk.ReadImage(mask_path)
-        mask_array = sitk.GetArrayFromImage(mask_itk)
-        
-        mask_slice = mask_array[slice_idx, :, :]
-        # 我们只做二分类：背景(0) vs 肝脏(1)。肝脏和肿瘤都算作1。
-        mask_slice[mask_slice > 0] = 1 
-        mask_slice = mask_slice.astype(np.float32)
+        # --- 在这里执行“在线”数据增强 ---
+        # 例如，随机翻转
+        if torch.rand(1) > 0.5:
+            # 沿 Z 轴 (dim=1) 翻转
+            image_patch = torch.flip(image_patch, dims=[1])
+            label_patch = torch.flip(label_patch, dims=[0])
+        if torch.rand(1) > 0.5:
+            # 沿 Y 轴 (dim=2) 翻转
+            image_patch = torch.flip(image_patch, dims=[2])
+            label_patch = torch.flip(label_patch, dims=[1])
+        if torch.rand(1) > 0.5:
+            # 沿 X 轴 (dim=3) 翻转
+            image_patch = torch.flip(image_patch, dims=[3])
+            label_patch = torch.flip(label_patch, dims=[2])
 
-        # --- 转换成Torch Tensor ---
-        # 添加一个通道维度 (C, H, W)
-        img_tensor = torch.from_numpy(img_slice).unsqueeze(0)
-        mask_tensor = torch.from_numpy(mask_slice).unsqueeze(0)
-        
-        return img_tensor, mask_tensor
+        return {"image": image_patch, "label": label_patch}
